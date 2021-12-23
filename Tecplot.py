@@ -4,8 +4,6 @@ import warnings
 import io
 
 
-# have a pandasDataframe method instead?
-
 class TecplotData:
     # TODO: split into tecplot base class and DSW supercalss?
     def __init__(self, filename=None):
@@ -14,19 +12,26 @@ class TecplotData:
         self.temperature = 'Temperature'
         self.datum = 'Datum'
         self.zone = TPHeaderZone
-        self.data = pd.DataFrame
+        self.data = pd.DataFrame()
         if filename is not None:
+            self.filename = filename
             self.readfile(filename)
-    def readfile(self, filename):
+        else:
+            self.filename = None
+
+    def readfile(self, filename) -> None:
         """
         populate the class attributes from the file, data is available in self.data as pandas.dataframe
         :param filename:
         :return: None, data are stored as attributes in the class object.
+
+        >> tvel.readfile("Velocity.dat")
         """
         '''
         ToDo:
         * deal with 3d data
         '''
+        self.filename = filename
         with open(filename) as f:
             try:
                 self.title = re.match('Title = (.+)', f.readline()).group(1).strip("\"")
@@ -62,7 +67,7 @@ class TecplotData:
                 warnings.warn('Tecplot file  ' + filename + ' missing zone details')
         self.data = pd.read_csv(filename, skiprows=x + 3, index_col=False, sep='\s+', names=variable)
 
-    def to_multiindex(self, remove_originalcols=False,filename = None):
+    def to_multiindex(self, remove_originalcols=False, filename=None) -> None:
         '''
         reindex to multi index by identifying the I and J columns
         remove_originalcols = False by default, remove the columns that have been used as index, but may make writing back to .dat more difficult
@@ -72,14 +77,14 @@ class TecplotData:
         if self.zone.nj == 1:
             print(f'j=1, multiindex not supported.')
         else:
-            # identify i-axis
+            # identify di-axis
             icol = self.data.loc[:, self.data.nunique() == int(self.zone.ni)].columns
             if len(icol) == 0:
                 warnings.warn(
                     f"Warning in reading {filename}.\nZone data and data mismatch, no column with {self.zone.ni} unique items. I-axis not found.")
             elif len(icol) != 1:
                 warnings.warn(
-                    f"Warning in reading {filename}.\nMultiple variables can be the i-axis, choosing {icol[0]} as the I-axis.")
+                    f"Warning in reading {filename}.\nMultiple variables can be the di-axis, choosing {icol[0]} as the I-axis.")
                 icol = icol[0]
             jcol = self.data.loc[:, self.data.nunique() == int(self.zone.nj)].columns
             jcol = jcol.difference(icol)
@@ -88,21 +93,23 @@ class TecplotData:
                     f"Warning in reading {filename}.\nZone data and data mismatch, no column with {self.zone.ni} unique items. J-axis not found.")
             elif len(jcol) != 1:
                 warnings.warn(
-                    f"Warning in reading {filename}.\nMultiple variables can be the i-axis, choosing {icol[0]} as the J-axis.")
+                    f"Warning in reading {filename}.\nMultiple variables can be the di-axis, choosing {icol[0]} as the J-axis.")
 
             assert not icol.equals(
-                jcol), f"Error in reading 3d data from {filename}, failed to identify unique i,j-axis"
+                jcol), f"Error in reading 3d data from {filename}, failed to identify unique di,j-axis"
             index = pd.MultiIndex.from_frame(self.data.loc[:, icol.append(jcol)])
             self.data.set_index(index, inplace=True)
             # left the 2 axis in the dataframe in place as well to have options, but should really use the index
             if remove_originalcols:
                 self.data.pop(icol.append(jcol))
 
-    def write_tecplot(self, filename):
+    def write_tecplot(self, filename,Datum = False) -> None:
         '''beta testing currently, write TP object to file
 
         :param filename: including extension (.dat)
         does not return anything in python
+
+        >> tvel.write_tecplot("Velocity.dat")
         '''
         if self.data is None or self.zone is None:
             warnings.warn("data incomplete, try again")
@@ -114,16 +121,18 @@ class TecplotData:
                 warnings.warn("data incomplete, try again")
             varstr = str(self.data.columns.to_list()).strip("[]").replace("\'", "\"")
             f.write(f'Variables = {varstr}\n')
-            try:
-                f.write(f'# PAtm(Pa) TAtm(K)= {self.pressure} {self.temperature}\n')
-            except:
-                pass
-            try:
-                f.write(f'#Datums= {self.datum}\n')
-            except:
-                pass
+            if Datum:
+                try:
+                    f.write(f'# PAtm(Pa) TAtm(K)= {self.pressure} {self.temperature}\n')
+                except:
+                    pass
+                try:
+                    f.write(f'#Datums= {self.datum}\n')
+                except:
+                    pass
             f.write(f'{self.zone.to_string()}\n')  # need fix
             self.data.to_string(f, header=False, index=False, col_space=6)
+            f.flush()
 
     def addtimestamp(self, day='Day', time='Time (HHMM)', startday='19990716'):
         """
@@ -145,6 +154,8 @@ class TecplotData:
         buf.write(f"{self.zone.__repr__()}\n")
         buf.write(self.data.__repr__())
         return buf.getvalue()
+
+
 # deal with 3d data?
 
 
@@ -156,61 +167,26 @@ class TPHeaderZone:
     This line is also the default input if no string is inputed and the attributed can be changed later.
     '''
 
-    def __init__(self, zonestr='Zone T = "", I = 1, J = 1, K = 1, F = POINT'):
+    def __init__(self, zonestr='Zone T = ".", I = 1, J = 1, K = 1, F = POINT'):
         # Zone T = "Start Date & Time yyyymmdd hh mm ss 20210429 17 6 0", I=1979, J=1, K=1, F=POINT
-        zonematch = re.compile('ZoneT=(.+)(,ZONETYPE=(.*))?,I=(.+),J=(.+),K=(.+),(F=(.+))?')
+        zonematch = re.compile("ZoneT=(.+)(,ZONETYPE=(.*))?,I=(.+),J=(.+),K=(.+),(F=(.+))?")
         mtch = zonematch.match(zonestr.replace(" ", ""))
-        self.zonetitle = mtch.group(1)
-        self.zonetype = mtch.group(3)
-        self.ni = mtch.group(4)
-        self.nj = mtch.group(5)
-        self.nk = mtch.group(6)
-        self.F = mtch.group(8)
+        self.zonetitle = str(mtch.group(1))
+        self.zonetype = str(mtch.group(3))
+        self.ni = int(mtch.group(4))
+        self.nj = int(mtch.group(5))
+        self.nk = int(mtch.group(6))
+        self.F = str(mtch.group(8))
 
     def to_string(self) -> str:
         '''    use of exporting in .dat, return the zone line as a str for writing directly into the file.
         :return: a str complied from the obj attributes as the zone line in the header
         '''
-        output = f'Zone T = \"{self.zonetitle}\"'
-        output = output + f', I = {self.ni}, J = {self.nj}, K = {self.nk}, F = {self.F}'
+
+        output = f'Zone T = "{self.zonetitle}"'
+        output = output + f', I = {int(self.ni)}, J = {int(self.nj)}, K = {int(self.nk)}, F = {self.F}'
         return output
 
     def __repr__(self):
         return self.to_string()
 
-
-'''
-struct DswTecplotFileContents {
-	char	Filename[DSW_LINE_LEN];
-	char	Title[DSW_LINE_LEN];
-	int		NVar;
-	char	VarName[DSW_MAX_NVAR][DSW_LINE_LEN];
-	int		AtmConditionsDefined;
-	double	PAtm;
-	double	TAtm;
-	double	RelativeHumidity;		/* % */
-	char	ZoneTitle[DSW_LINE_LEN];
-	int		ZoneType;
-	int		NI;
-	int		NJ;
-	int		NK;
-	int		NPoint;
-	int		NElements;
-	int		DatumsDefined;
-	double	Datums[DSW_MAX_NVAR];
-	double	*Data[DSW_MAX_NVAR];
-	int		*ElementPoints[3];
-};
-
-struct DswTecplotExtendedHeader {
-	char	Title[DSW_LINE_LEN];
-	int		NVar;
-	char	VarName[DSW_MAX_NVAR][DSW_LINE_LEN];
-	int		AtmConditionsDefined; 
-	double	PAtm;
-	double	TAtm;
-	double	RelativeHumidity;		/* % */
-	int		DatumsDefined;
-	double	Datums[DSW_MAX_NVAR];
-};
-'''
