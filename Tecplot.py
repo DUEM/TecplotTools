@@ -11,7 +11,7 @@ class TecplotData:
         self.pressure = 'Pressure'
         self.temperature = 'Temperature'
         self.datum = 'Datum'
-        self.zone = TPHeaderZone
+        self.zone = TPHeaderZone()
         self.data = pd.DataFrame()
         if filename is not None:
             self.filename = filename
@@ -134,7 +134,7 @@ class TecplotData:
             self.data.to_string(f, header=False, index=False, col_space=6)
             f.flush()
 
-    def addtimestamp(self, day='Day', time='Time (HHMM)', startday='19990716'):
+    def addtimestamp(self, startday='19990716',day='Day', time='Time (HHMM)'):
         """
         DSW SolarSim Specific Function
         create a timestamp column in the dataframe if the file have day and time column in the DSWSS format
@@ -167,9 +167,9 @@ class TPHeaderZone:
     This line is also the default input if no string is inputed and the attributed can be changed later.
     '''
 
-    def __init__(self, zonestr='Zone T = ".", I = 1, J = 1, K = 1, F = POINT'):
+    def __init__(self, zonestr='Zone T = " ", I = 1, J = 1, K = 1, F = POINT'):
         # Zone T = "Start Date & Time yyyymmdd hh mm ss 20210429 17 6 0", I=1979, J=1, K=1, F=POINT
-        zonematch = re.compile("ZoneT=(.+)(,ZONETYPE=(.*))?,I=(.+),J=(.+),K=(.+),(F=(.+))?")
+        zonematch = re.compile('ZoneT="(.*)"(,ZONETYPE=(.*))?,I=(.+),J=(.+),K=(.+),(F=(.+))?')
         mtch = zonematch.match(zonestr.replace(" ", ""))
         self.zonetitle = str(mtch.group(1))
         self.zonetype = str(mtch.group(3))
@@ -177,6 +177,8 @@ class TPHeaderZone:
         self.nj = int(mtch.group(5))
         self.nk = int(mtch.group(6))
         self.F = str(mtch.group(8))
+        if self.zonetitle == '':
+            self.zonetitle = ' '
 
     def to_string(self) -> str:
         '''    use of exporting in .dat, return the zone line as a str for writing directly into the file.
@@ -190,3 +192,36 @@ class TPHeaderZone:
     def __repr__(self):
         return self.to_string()
 
+class DSWinput:
+    """class for DSW input file such as LogVolts.in or SolarSim.in"""
+    def __init__(self, filename=None):
+        self.lines = ''
+        if filename is not None:
+            self.filename = filename
+            self.readfile(filename)
+        else:
+            self.filename = None
+    def readfile(self,filename):
+        with open(filename) as f:
+            self.lines = f.readlines()
+    def get_value(self,param):
+        for l in self.lines:
+            if param in l:
+                mtch = re.match(".*=\s*(\S*)\s*", l)
+                return mtch.group(1)
+            else:
+                raise ValueError("param not in input file")
+    def set_value(self,param,value):
+        """set the value of the parameter"""
+        for i,l in enumerate(self.lines):
+            if param in l:
+                mtch = re.match(".*=\s*(\S*)\s*", l)
+                l.replace(mtch(1),value)
+                self.lines[i] = l
+                return 1
+            else:
+                raise ValueError("param not in input file")
+    def write_input(self,filename):
+        with open(filename,"w") as f:
+            f.writelines(self.lines)
+        return 1
